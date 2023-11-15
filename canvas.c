@@ -9,7 +9,8 @@
 
 
 // MACROS
-#define N_CANVAS_HEADERS 3
+#define N_CANVAS_HEADERS 3  // Number of headers
+#define CANVAS_RESPONSE_BUFFER 4096  // Max size of response from Canvas
 
 
 // INTERNALS ============================================================================
@@ -189,7 +190,7 @@ int send_req(  // Send a request
 int create_canvas_headers(  // Create headers for Canvas API requests
 		struct curl_slist *headers,  // Headers struct to append to
 		char *token,  // OAUTH token
-		char *type  // Request type
+		char *method  // Request type
 	) {
 
 	char auth_header[92] = "Authorization: Bearer ";  // Base
@@ -198,8 +199,8 @@ int create_canvas_headers(  // Create headers for Canvas API requests
 	char *format;
 
 	if (  // POST and PUT requests are HTML form encoded
-		strcmp(type, "POST") == 0 ||
-		strcmp(type, "PUT") == 0
+		strcmp(method, "POST") == 0 ||
+		strcmp(method, "PUT") == 0
 		) {
 
 		format = "application/x-www-form-urlencoded";
@@ -213,8 +214,6 @@ int create_canvas_headers(  // Create headers for Canvas API requests
 	char format_header[128] = "content-type: ";  // Base
 	strcat(format_header, format);  // Concat base and format
 
-	printf(format_header);
-
 	char *headers_arr[N_CANVAS_HEADERS] = {  // Raw string headers
 		auth_header,
 		format_header,
@@ -226,6 +225,40 @@ int create_canvas_headers(  // Create headers for Canvas API requests
 		headers_arr,
 		N_CANVAS_HEADERS
 		);
+
+	return 0;
+
+}
+
+int send_canvas_req(
+	Response *res,  // Response struct to write to
+	char *method,  // Request method
+	char *token,  // OAUTH token
+	char *url,  // URL to request to
+	char *content  // Content of the request, if applicable
+	) {
+
+	struct curl_slist *headers = NULL;  // Initialize headers
+
+	create_canvas_headers(  // Create headers
+		headers,
+		token,
+		method
+		);
+
+	Request *req = malloc_request(  // Allocate request
+		method,
+		url,
+		headers,
+		content
+		);
+
+	send_req(  // Send request
+		req,
+		res
+		);
+
+	free_request(req);
 
 	return 0;
 
