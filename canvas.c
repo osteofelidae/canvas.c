@@ -1,4 +1,4 @@
-// DEPENDENCIES
+// DEPENDENCIES -----------------------------------------------------------------------------------
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
@@ -8,282 +8,177 @@
 #include "internals.h"
 
 
-// MACROS
-#define N_CANVAS_HEADERS 3  // Number of headers
-#define CANVAS_RESPONSE_BUFFER 4096  // Max size of response from Canvas
+// INTERNALS ======================================================================================
 
-
-// INTERNALS ============================================================================
-
-// INTERNAL STRUCT FUNCTIONS ------------------------------------------------------------
-Request *malloc_request(  // Allocate memory for Request struct
-		char *method,  // GET, POST, etc.
-		char *url,  // Url to send request to
-		struct curl_slist *headers,  // Headers
-		char *content  // Request content
+// FUNCTIONS --------------------------------------------------------------------------------------
+int lprintf(  // Verbose print
+	char *text,  // Text to be printed
+	int type,  // 1 for error, 2 for normal
+	int verbose  // Pass in verbose param from enclosing function
 	) {
 
-	Request *req = malloc(sizeof(Request));  // Allocate Request struct memory
-
-	req->method = method;  // Set Request members
-	req->url = url;
-	req->headers = headers;
-	req->content = content;
-
-	return req;
-
-}
-int free_request(  // Free Request struct memory
-	Request *req  // Request struct to free
-	) {
-
-	free(req);  // Free Request struct
+	if (type <= verbose) {printf("%s\n", text);}  // Print if allowed
 
 	return 0;
 
 }
 
-Response *malloc_response(  // Allocate memory for Response struct
-	long code,  // Status code
-	char *content  // Response content
-	) {
-
-	Response *res = malloc(sizeof(Response));  // Allocate Response struct memory
-
-	res->content = content;  // Set Response members
-
-	return res;
-
-}
-int free_response(  // Free Response struct memory
-	Response *res  // Response struct to free
-	) {
-
-	free(res);  // Free Response struct
-
-	return 0;
-
-}
-
-
-// INTERNAL REQUEST FUNCTIONS -----------------------------------------------------------
-int create_headers(  // Make header struct from raw strings
-	struct curl_slist *headers,  // Headers list to add to
-	char *headers_raw[], // Array of string headers
-	int n_headers  // Number of headers in headers_raw
-	) {
-
-	for (int index = 0; index < n_headers; index++) {  // Iterate over raw headers
-		headers = curl_slist_append(  // Add current raw header to headers list
-			headers, 
-			headers_raw[index]
-			);
-	}
-
-	return 0;
-
-}
-
-size_t req_callback(  // Callback function for requests
-	char *data,  // Data delivered by request
+size_t callback(  // Callback function for requests
+	char *data,  // Response data
 	size_t size,
 	size_t nmemb,
 	char *var  // String variable to write to
 	) {
 
-	if (sizeof(data) <= sizeof(var)) {  // If output buffer is large enough
-		strcpy(  // Copy result to output var
-			var,
-			data
-			);
-	} else {
-		fprintf(  // Print error to stderr
-			stderr,
-			"Request callback: output buffer too small"
-			);
-	}
+	strcpy(  // Copy data over
+		var, 
+		data
+		);
 
-	return size * nmemb;  // Return same size so that CURL knows callback was successful
+	return size * nmemb;  // Return correct int for CURL
 
 }
 
-int send_req(  // Send a request
-	struct Request *req,  // Request data
-	struct Response *res  // Struct to store response in
+int doreq(  // Send a request
+	char var[],  // Var to write to
+	char *token,  // OAUTH token
+	char *method,  // Request method (GET, POST, etc.)
+	char *url,  // URL to send request to
+	char *content,  // POST content
+	int verbose  // 0: none; 1: errors only; 2: all
 	) {
 
-	CURL *curl = curl_easy_init();  // CURL handle
-	CURLcode curl_result;  // CURL result
-
-	curl_easy_setopt(  // Specify request type
-		curl,
-		CURLOPT_CUSTOMREQUEST,
-		req->method
+	lprintf(  // Verbose print
+		"doreq: creating request",
+		2,
+		verbose
 		);
 
+	CURL *curl;  // CURL handle
+	CURLcode curlcode;  // CURL result
+	long rescode;  // Response status code
+
+	curl = curl_easy_init();  // Initialize
+	
+	char auth[128] = "Authorization: Bearer ";  // [TODO optimize size] Auth header
+	strcat(auth, token);  // Append token to auth header
+
+	char format[128] = "content-type:application/";  // [TODO optimize size] Content-type header
+	if (  // POST and PUT requests are HTML form encoded
+		strcmp(method, "POST") == 0 || 
+		strcmp(method, "PUT") == 0
+		) {
+		strcat(format, "x-www-form-urlencoded");
+	} else {  // Other requests are json encoded
+		strcat(format, "json");
+	}
+
+	struct curl_slist *headers = NULL;  // Headers slist
+
+	headers = curl_slist_append(headers, auth);  // Add generated headers to slist
+	headers = curl_slist_append(headers, format);
+
+	curl_easy_setopt(  // Set request method
+		curl,
+		CURLOPT_CUSTOMREQUEST,
+		method
+		);
+	
+	curl_easy_setopt(  // Set request headers
+		curl,
+		CURLOPT_HTTPHEADER,
+		headers
+		);
+	
 	curl_easy_setopt(  // Set CURL url
 		curl,
 		CURLOPT_URL, 
-		req->url
+		url
 		);
-
-	if (req->headers != NULL) {  // If headers are provided
-		curl_easy_setopt(  // Set CURL headers
-			curl,
-			CURLOPT_HTTPHEADER,
-			req->headers
-			);
-	}
-
-	if (req->content != NULL) {  // If content is provided
-		curl_easy_setopt(  // Set content
+	
+	if (content != NULL) {  // If content is provided, set request content
+		curl_easy_setopt(
 			curl,
 			CURLOPT_POSTFIELDS,
-			req->content
+			content
 			);
 	}
-
+	
 	curl_easy_setopt(  // Set callback function
 		curl,
 		CURLOPT_WRITEFUNCTION,
-		req_callback
+		callback
 		);
 
-	curl_easy_setopt(  // Set callback function parameter
+	curl_easy_setopt(  // Set callback param var
 		curl,
 		CURLOPT_WRITEDATA,
-		res->content
+		var
 		);
 
-	curl_result = curl_easy_perform(curl);  // Do request
+	lprintf(  // Verbose print
+		"doreq: sending request",
+		2,
+		verbose
+		);
+	
+	curlcode = curl_easy_perform(curl);  // Do request
 
-	if (curl_result == CURLE_OK) {  // If request succeed
+	if (curlcode != CURLE_OK && verbose == 1) {  // If request failed
 
-		curl_easy_getinfo(  // Response code
+		lprintf(  // Verbose print
+			"doreq: request failed: invalid parameters",
+			1,
+			verbose
+		);
+
+		return 1;  // Return with error code
+
+	} else {
+
+		curl_easy_getinfo(  // Get response code
 			curl,
 			CURLINFO_RESPONSE_CODE,
-			&res->code
+			&rescode
 			);
 
-	} else {  // If request failed
+		if (2 <= verbose) {printf("doreq: response received: code %ld\n", rescode);}
 
-		fprintf(  // Print error to stderr
-			stderr,
-			"%s request: request to %s failed (%s)\n",
-			req->method,
-			req->url,
-			curl_easy_strerror(curl_result)
-			);
-
-		return -1;
+		switch (rescode) {
+			case 401:
+				lprintf(  // Verbose print
+					"doreq: authentication error: invalid OAUTH token",
+					1,
+					verbose
+				);
+				return 1;  // Return with error code
+		}	// TODO MORE CASES
 
 	}
 
-	curl_easy_cleanup(curl);  // Clean up
+	curl_easy_cleanup(curl);  // Free CURL handle
+
+	curl_slist_free_all(headers);  // Free headers slist
 
 	return 0;
 
 }
 
 
-// INTERNAL CANVAS FUNCTIONS ------------------------------------------------------------
-int create_canvas_headers(  // Create headers for Canvas API requests
-		struct curl_slist *headers,  // Headers struct to append to
-		char *token,  // OAUTH token
-		char *method  // Request type
-	) {
+// PUBLICS ========================================================================================
 
-	char auth_header[92] = "Authorization: Bearer ";  // Base
-	strcat(auth_header, token);  // Concat base and OAUTH token
+// FUNCTIONS --------------------------------------------------------------------------------------
+int init() {
 
-	char *format;
-
-	if (  // POST and PUT requests are HTML form encoded
-		strcmp(method, "POST") == 0 ||
-		strcmp(method, "PUT") == 0
-		) {
-
-		format = "application/x-www-form-urlencoded";
-
-	} else {  // Other requests are JSON encoded
-
-		format = "application/json";
-
-	}
-
-	char format_header[128] = "content-type: ";  // Base
-	strcat(format_header, format);  // Concat base and format
-
-	char *headers_arr[N_CANVAS_HEADERS] = {  // Raw string headers
-		auth_header,
-		format_header,
-		"Accept: application/json+canvas-string-ids"  // Force all returned IDs to be strings
-	};
-
-	create_headers(  // Create headers
-		headers,
-		headers_arr,
-		N_CANVAS_HEADERS
-		);
-
+	curl_global_init(CURL_GLOBAL_DEFAULT);
 	return 0;
 
 }
 
-int send_canvas_req(
-	Response *res,  // Response struct to write to
-	char *method,  // Request method
-	char *token,  // OAUTH token
-	char *url,  // URL to request to
-	char *content  // Content of the request, if applicable
-	) {
+int clean() {
 
-	struct curl_slist *headers = NULL;  // Initialize headers
-
-	create_canvas_headers(  // Create headers
-		headers,
-		token,
-		method
-		);
-
-	Request *req = malloc_request(  // Allocate request
-		method,
-		url,
-		headers,
-		content
-		);
-
-	send_req(  // Send request
-		req,
-		res
-		);
-
-	free_request(req);
-
+	curl_global_cleanup();
 	return 0;
 
 }
 
-
-// PUBLICS ==============================================================================
-
-// PUBLIC STRUCT FUNCTIONS --------------------------------------------------------------
-
-
-
-// PUBLIC CANVAS FUNCTIONS --------------------------------------------------------------
-int init() {  // Initialize environment
-
-	curl_global_init(CURL_GLOBAL_DEFAULT);  // Global CURL init
-
-	return 0;
-
-}
-
-int clean() {  // Clean environment
-
-	curl_global_cleanup();  // Global CURL cleanup
-
-	return 0;
-
-}
